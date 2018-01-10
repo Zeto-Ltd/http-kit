@@ -13,6 +13,9 @@ import javax.net.ssl.SSLEngine;
 import javax.net.ssl.SSLException;
 import javax.net.ssl.SSLParameters;
 import java.io.IOException;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.net.*;
 import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
@@ -35,11 +38,36 @@ import static org.httpkit.client.State.ALL_READ;
 import static org.httpkit.client.State.READ_INITIAL;
 
 public class HttpClient implements Runnable {
+    // lifted from https://stackoverflow.com/questions/28568188/java-net-uri-get-host-with-underscores
+    private static void patchUriField(String methodName, String fieldName)
+            throws ReflectiveOperationException {
+        Method lowMask = URI.class.getDeclaredMethod(methodName, String.class);
+        lowMask.setAccessible(true);
+        long lowMaskValue = (Long) lowMask.invoke(null, "-_");
+
+        Field lowDash = URI.class.getDeclaredField(fieldName);
+
+        Field modifiers = Field.class.getDeclaredField("modifiers");
+        modifiers.setAccessible(true);
+        modifiers.setInt(lowDash, lowDash.getModifiers() & ~Modifier.FINAL);
+
+        lowDash.setAccessible(true);
+        lowDash.setLong(null, lowMaskValue);
+    }
+
     private static final AtomicInteger ID = new AtomicInteger(0);
 
     public static final SSLContext DEFAULT_CONTEXT;
 
     static {
+        try {
+            // add support for _ to host names which is technically against
+            // the RFC but, practically speaking, is widely required
+            patchUriField("lowMask", "L_DASH");
+            patchUriField("highMask", "H_DASH");
+        } catch (ReflectiveOperationException roe) {
+            throw new Error("Failed to modify URI for host underscore support");
+        }
         try {
             DEFAULT_CONTEXT = SSLContext.getDefault();
         } catch (NoSuchAlgorithmException e) {
@@ -341,7 +369,8 @@ public class HttpClient implements Runnable {
                 engine.setUseClientMode(true);
 
             SSLParameters sslParameters = engine.getSSLParameters();
-            SNIServerName hostName = new SNIHostName(uri.getHost());
+            // pass in byte array to skip hostname validation (already done by URI)
+            SNIServerName hostName = new SNIHostName(uri.getHost().getBytes());
             List<SNIServerName> list = new ArrayList<SNIServerName>();
             list.add(hostName);
             sslParameters.setServerNames(list);
