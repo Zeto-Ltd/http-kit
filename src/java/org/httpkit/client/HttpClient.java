@@ -297,7 +297,7 @@ public class HttpClient implements Runnable {
         }
 
         if (uri.getHost() == null) {
-            cb.onThrowable(new IllegalArgumentException("host is null: " + url));
+            cb.onThrowable(new IllegalArgumentException("host is invalid: " + url));
             return;
         }
 
